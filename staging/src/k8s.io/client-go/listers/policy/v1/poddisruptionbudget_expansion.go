@@ -37,24 +37,16 @@ type PodDisruptionBudgetNamespaceListerExpansion interface{}
 
 // GetPodPodDisruptionBudgets returns a list of PodDisruptionBudgets matching a pod.
 func (s *podDisruptionBudgetLister) GetPodPodDisruptionBudgets(pod *v1.Pod) ([]*policy.PodDisruptionBudget, error) {
-	var selector labels.Selector
-
 	list, err := s.PodDisruptionBudgets(pod.Namespace).List(labels.Everything())
 	if err != nil {
 		return nil, err
 	}
 
+	podLabels := labels.Set(pod.Labels)
 	var pdbList []*policy.PodDisruptionBudget
 	for i := range list {
 		pdb := list[i]
-		selector, err = metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
-		if err != nil {
-			// This object has an invalid selector, it does not match the pod
-			continue
-		}
-
-		// Unlike the v1beta version, here we let an empty selector match everything.
-		if !selector.Matches(labels.Set(pod.Labels)) {
+		if !selectorMatches(pdb.Spec.Selector, podLabels) {
 			continue
 		}
 		pdbList = append(pdbList, pdb)
@@ -65,4 +57,22 @@ func (s *podDisruptionBudgetLister) GetPodPodDisruptionBudgets(pod *v1.Pod) ([]*
 	}
 
 	return pdbList, nil
+}
+
+// selectorMatches reports whether a PodDisruptionBudget selector matches the
+// pod labels. A nil or invalid selector matches nothing, and unlike v1beta1,
+// an empty selector matches everything.
+//
+// matchLabels are compared first, without parsing or allocating. Only selectors
+// that pass are parsed and validated.
+func selectorMatches(selector *metav1.LabelSelector, podLabels labels.Set) bool {
+	if selector == nil {
+		return false
+	}
+	// Prefilter only: matchLabels aren't validated yet, LabelSelectorAsSelector does that below.
+	if !labels.ValidatedSetSelector(selector.MatchLabels).Matches(podLabels) {
+		return false
+	}
+	s, err := metav1.LabelSelectorAsSelector(selector)
+	return err == nil && s.Matches(podLabels)
 }
